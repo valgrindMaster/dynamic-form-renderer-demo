@@ -38,10 +38,16 @@ function useZodValidationResolver(schema: FormDefinition): Resolver {
       }
       const errors: Record<string, { type: string; message: string }> = {};
       for (const issue of result.error.issues) {
-        const path = issue.path.join('.');
-        if (path && !errors[path]) {
-          errors[path] = { type: issue.code, message: issue.message };
+        const path = issue.path.length > 0 ? issue.path.join('.') : 'root';
+        if (!errors[path]) {
+          errors[path] = { type: String(issue.code), message: issue.message };
         }
+      }
+      // Backstop: a failed parse with no extractable per-field paths must
+      // still register *something* — RHF treats empty errors as valid and
+      // would otherwise let an invalid submission through.
+      if (Object.keys(errors).length === 0) {
+        errors.root = { type: 'invalid', message: 'Please review your inputs.' };
       }
       return { values: {}, errors };
     },
@@ -109,9 +115,14 @@ export function FormRenderer({
   const currentValues = useWatch({ control: form.control });
 
   const onSubmit = form.handleSubmit(async (values) => {
-    await saveSubmission({ formId, submissionId, values });
-    toast.success(submissionId ? 'Submission updated' : 'Submission created');
-    router.push('/');
+    try {
+      await saveSubmission({ formId, submissionId, values });
+      toast.success(submissionId ? 'Submission updated' : 'Submission created');
+      router.push('/');
+    } catch (err) {
+      toast.error('Saving failed — please review your inputs and try again.');
+      if (process.env.NODE_ENV !== 'production') console.error(err);
+    }
   });
 
   return (

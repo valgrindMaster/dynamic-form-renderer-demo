@@ -241,13 +241,29 @@ export function buildResponseValidator(
   form: FormDefinition,
   currentValues: Record<string, unknown>,
 ) {
+  const knownFieldNames = new Set(form.fields.map((f) => f.name));
+  const visibleFieldNames = new Set<string>();
   const shape: Record<string, z.ZodType> = {};
   for (const field of form.fields) {
     if (!isFieldVisible(field, currentValues)) continue;
+    visibleFieldNames.add(field.name);
     shape[field.name] = buildFieldValidator(field);
   }
-  // .strict() rejects unknown keys (including values for hidden fields that
-  // shouldn't have made it into the submission). Safer default for our
-  // controlled client/server pair.
-  return z.object(shape).strict();
+  // The preprocess strips keys that belong to currently-hidden fields —
+  // those are stale defaults from before a visibility-driving field changed,
+  // not a programming error. Truly unknown keys (not declared on the form
+  // at all) pass through and trip .strict() below, which still surfaces
+  // schema/client drift loudly.
+  return z.preprocess(
+    (val) => {
+      if (val === null || typeof val !== 'object') return val;
+      const entries = Object.entries(val as Record<string, unknown>);
+      return Object.fromEntries(
+        entries.filter(
+          ([k]) => visibleFieldNames.has(k) || !knownFieldNames.has(k),
+        ),
+      );
+    },
+    z.object(shape).strict(),
+  );
 }
